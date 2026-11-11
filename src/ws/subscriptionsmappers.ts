@@ -1,0 +1,926 @@
+import type { Exchange, Filter } from 'tardis-dev'
+
+// https://www.bitmex.com/app/wsAPI
+const bitmexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const args = typeof message.args === 'string' ? [message.args] : message.args
+
+    return args.map((arg: string) => {
+      const channelSymbols = arg.split(':')
+      if (channelSymbols.length == 1) {
+        return {
+          channel: channelSymbols[0]
+        }
+      }
+      return {
+        channel: channelSymbols[0],
+        symbols: [channelSymbols[1]]
+      }
+    })
+  }
+}
+
+// https://docs.pro.coinbase.com/#protocol-overview
+const coinbaseMaper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const topLevelSymbols = message.product_ids
+    const finalChannels: Filter<any>[] = []
+
+    const channelMappings = {
+      full: ['received', 'open', 'done', 'match', 'change', 'full_snapshot'],
+      level2: ['snapshot', 'l2update'],
+      matches: ['match', 'last_match'],
+      ticker: ['ticker']
+    }
+
+    message.channels.forEach((channel: any) => {
+      const channelName = typeof channel == 'string' ? channel : channel.name
+      const symbols = typeof channel == 'string' ? topLevelSymbols : channel.product_ids
+      const mappedChannels = (channelMappings as any)[channelName]
+
+      mappedChannels.forEach((channel: string) => {
+        finalChannels.push({
+          channel,
+          symbols
+        })
+      })
+    })
+
+    return finalChannels
+  }
+}
+
+// https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-overview
+const coinbaseDerivativesMapper: SubscriptionMapper = {
+  canHandle: (message: any) => message.type === 'subscribe',
+  map: (message: any) => [{ channel: message.channel === 'level2' ? 'l2_data' : message.channel, symbols: message.product_ids }]
+}
+
+// https://docs.deribit.com/v2/#subscription-management
+const deribitMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'public/subscribe'
+  },
+
+  map: (message: any) => {
+    return message.params.channels.map((channel: string) => {
+      const lastSeparator = channel.lastIndexOf('.')
+      const firstSeparator = channel.indexOf('.')
+
+      return {
+        channel: channel.slice(0, firstSeparator),
+        // handle both
+        // "deribit_price_ranking.btc_usd" and "book.ETH-PERPETUAL.100.1.100ms" cases
+        // we need to extract channel name and symbols out of such strings
+        symbols: [channel.slice(firstSeparator + 1, lastSeparator == firstSeparator ? undefined : lastSeparator)]
+      }
+    })
+  }
+}
+
+// https://www.cryptofacilities.com/resources/hc/en-us/sections/360000120914-Websocket-API-Public
+const cryptofacilitiesMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.event == 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.feed,
+        symbols: message.product_ids
+      }
+    ]
+  }
+}
+
+// https://www.bitstamp.net/websocket/v2/
+const bitstampMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.event == 'bts:subscribe'
+  },
+
+  map: (message: any) => {
+    const separator = message.data.channel.lastIndexOf('_')
+    return [
+      {
+        channel: message.data.channel.slice(0, separator),
+        symbols: [message.data.channel.slice(separator + 1)]
+      }
+    ]
+  }
+}
+
+// https://www.okex.com/docs/en/#spot_ws-sub
+const okexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op == 'subscribe'
+  },
+
+  map: (message: any) => {
+    return message.args.map((arg: string) => {
+      const separator = arg.indexOf(':')
+      return {
+        channel: arg.slice(0, separator),
+        symbols: [arg.slice(separator + 1)]
+      }
+    })
+  }
+}
+// https://docs.ftx.com/#request-format
+const ftxMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.channel,
+        symbols: [message.market]
+      }
+    ]
+  }
+}
+
+// https://www.kraken.com/features/websocket-api#message-subscribe
+const krakenMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.event === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.subscription.name,
+        symbols: message.pair
+      }
+    ]
+  }
+}
+// https://lightning.bitflyer.com/docs?lang=en#json-rpc-2.0-over-websocket
+const bitflyerMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const availableChannels = ['lightning_board_snapshot', 'lightning_board', 'lightning_ticker', 'lightning_executions']
+    const inputChannel = message.params.channel as string
+    const channel = availableChannels.find((c) => inputChannel.startsWith(c))!
+    const symbol = inputChannel.slice(channel.length + 1)
+
+    return [
+      {
+        channel,
+        symbols: [symbol]
+      }
+    ]
+  }
+}
+
+// https://docs.gemini.com/websocket-api/#market-data-version-2
+const geminiMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const finalChannels: Filter<any>[] = []
+
+    const channelMappings = {
+      l2: ['trade', 'l2_updates', 'auction_open', 'auction_indicative', 'auction_result']
+    }
+
+    message.subscriptions.forEach((sub: any) => {
+      const matchingChannels = (channelMappings as any)[sub.name]
+
+      matchingChannels.forEach((channel: string) => {
+        finalChannels.push({
+          channel,
+          symbols: sub.symbols
+        })
+      })
+    })
+
+    return finalChannels
+  }
+}
+
+// https://binance-docs.github.io/apidocs/futures/en/#live-subscribing-unsubscribing-to-streams
+const binanceMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'SUBSCRIBE'
+  },
+
+  map: (message: any) => {
+    return (message.params as string[]).map((param) => {
+      const lastSeparator = param.lastIndexOf('@')
+      const firstSeparator = param.indexOf('@')
+
+      if (firstSeparator === -1) {
+        return { channel: param, symbols: undefined }
+      }
+
+      return {
+        channel: param.slice(firstSeparator + 1, lastSeparator == firstSeparator ? undefined : lastSeparator),
+        symbols: [param.slice(0, firstSeparator)]
+      }
+    })
+  }
+}
+
+// https://docs.binance.org/api-reference/dex-api/ws-connection.html
+const binanceDEXMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.topic,
+        symbols: message.symbols
+      }
+    ]
+  }
+}
+
+// https://huobiapi.github.io/docs/spot/v1/en/#websocket-market-data
+const huobiMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.sub !== undefined
+  },
+
+  map: (message: any) => {
+    const pieces = message.sub.split('.')
+    return [
+      {
+        channel: pieces[2],
+        symbols: [pieces[1]]
+      }
+    ]
+  }
+}
+
+// https://github.com/bybit-exchange/bybit-official-api-docs/blob/master/en/websocket.md
+const BYBIT_V5_API_SWITCH_DATE = new Date('2023-04-05T00:00:00.000Z')
+
+const bybitMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return (message.args as string[]).map((arg) => {
+      const pieces = arg.split('.')
+
+      return {
+        channel: pieces.slice(0, -1).join('.'),
+        symbols: [pieces[pieces.length - 1]]
+      }
+    })
+  }
+}
+
+const bybitSpotMapper: SubscriptionMapper = {
+  canHandle: (message: any, date: Date) => {
+    if (date.valueOf() > BYBIT_V5_API_SWITCH_DATE.valueOf()) {
+      return message.op === 'subscribe'
+    }
+    return message.event === 'sub'
+  },
+
+  map: (message: any, date: Date) => {
+    if (date.valueOf() > BYBIT_V5_API_SWITCH_DATE.valueOf()) {
+      return (message.args as string[]).map((arg) => {
+        const pieces = arg.split('.')
+        return {
+          channel: pieces[0],
+          symbols: [pieces[pieces.length - 1]]
+        }
+      })
+    }
+
+    return [
+      {
+        channel: message.topic,
+        symbols: [message.symbol]
+      }
+    ]
+  }
+}
+
+const blockchainComMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.action === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.channel,
+        symbols: [message.symbol]
+      }
+    ]
+  }
+}
+
+// https://api.hitbtc.com/#subscribe-to-trades
+const hitBtcMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method !== undefined
+  },
+
+  map: (message: any) => {
+    const channelMappings = {
+      subscribeTrades: ['snapshotTrades', 'updateTrades'],
+      subscribeOrderbook: ['snapshotOrderbook', 'updateOrderbook']
+    } as any
+
+    return channelMappings[message.method].map((channel: string) => {
+      return {
+        channel,
+        symbols: [message.params.symbol]
+      }
+    })
+  }
+}
+
+const bitfinexMapper: SubscriptionMapper = {
+  canHandle: () => true,
+  map: () => []
+}
+
+const coinflexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return message.args.map((arg: string) => {
+      const split = arg.split(':')
+      return {
+        channel: split[0],
+        symbols: [split[1]]
+      }
+    })
+  }
+}
+
+const phemexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method !== undefined
+  },
+
+  map: (message: any) => {
+    const channelsMapping = {
+      'orderbook.subscribe': 'book',
+      'trade.subscribe': 'trades',
+      'market24h.subscribe': 'market24h'
+    } as any
+
+    return [
+      {
+        channel: channelsMapping[message.method],
+        symbols: message.params
+      }
+    ]
+  }
+}
+
+const deltaMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return message.payload.channels.map((channel: any) => {
+      return {
+        channel: channel.name,
+        symbols:
+          channel.symbols !== undefined && channel.name === 'mark_price' ? channel.symbols.map((s: any) => `MARK:${s}`) : channel.symbols
+      }
+    })
+  }
+}
+
+const deltaIndiaMapper: SubscriptionMapper = {
+  canHandle: (message: any) => message.type === 'subscribe',
+  map: (message: any) => message.payload.channels.map((channel: any) => ({ channel: channel.name, symbols: channel.symbols }))
+}
+
+const gateIOMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method !== undefined && message.method.endsWith('.subscribe')
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.method.split('.')[0],
+        symbols: message.params.map((s: any) => {
+          if (typeof s === 'string') {
+            return s
+          }
+          return s[0] as string
+        })
+      }
+    ]
+  }
+}
+
+const gateIOFuturesMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.event === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const channel = message.channel.split('.')[1]
+    if (channel === 'obu') {
+      return [{ channel, symbols: message.payload.map((stream: string) => stream.slice(3, stream.lastIndexOf('.'))) }]
+    }
+    if (channel === 'order_book') {
+      return [{ channel, symbols: [message.payload[0]] }]
+    }
+    if (channel === 'public_liquidates' && message.payload.includes('!all')) {
+      return [{ channel, symbols: [] }]
+    }
+
+    return [
+      {
+        channel,
+        symbols: message.payload.map((s: any) => {
+          if (typeof s === 'string') {
+            return s
+          }
+          return s[0] as string
+        })
+      }
+    ]
+  }
+}
+
+const poloniexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.command === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: 'price_aggregated_book',
+        symbols: [message.channel]
+      }
+    ]
+  }
+}
+
+const ascendexMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'sub' || message.op === 'req'
+  },
+
+  map: (message: any) => {
+    const channel = message.action || message.ch.split(':')[0]
+    const symbol = (message.args && message.args.symbol) || message.ch.split(':')[1]
+    return [
+      {
+        channel,
+        symbols: symbol ? [symbol] : []
+      }
+    ]
+  }
+}
+
+const dydxMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: message.channel,
+        symbols: message.id ? [message.id] : []
+      }
+    ]
+  }
+}
+
+const upbitMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return Array.isArray(message)
+  },
+
+  map: (message: any) => {
+    return message
+      .filter((m: any) => {
+        return m.type !== undefined
+      })
+      .map((m: any) => {
+        return {
+          channel: m.type,
+          symbols: m.codes
+        }
+      })
+  }
+}
+
+const serumMaper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const finalChannels: Filter<any>[] = []
+
+    const channelMappings = {
+      trades: ['recent_trades', 'trade'],
+      level1: ['quote'],
+      level2: ['l2snapshot', 'l2update'],
+      level3: ['l3snapshot', 'open', 'fill', 'change', 'done']
+    }
+
+    const symbols = message.markets
+    const mappedChannels = (channelMappings as any)[message.channel]
+
+    mappedChannels.forEach((channel: string) => {
+      finalChannels.push({
+        channel,
+        symbols
+      })
+    })
+
+    return finalChannels
+  }
+}
+
+const cryptoComMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return message.params.channels.map((channel: string) => {
+      const parts = channel.split('.')
+      return {
+        channel: parts[1],
+        symbols: [parts[0]]
+      }
+    })
+  }
+}
+
+const kucoinMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    //  "topic": "/market/ticker:BTC-USDT,ETH-USDT",
+    const parts = message.topic.split(':') as string[]
+    const symbols = parts[1].split(',')
+
+    return [
+      {
+        channel: parts[0].substring(1),
+        symbols
+      }
+    ]
+  }
+}
+
+const bitnomialMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const topLevelSymbols = message.product_codes
+    const finalChannels: Filter<any>[] = []
+
+    const channelMappings = {
+      book: ['book', 'levels'],
+      trade: ['trade'],
+      block: ['block']
+    }
+
+    message.channels.forEach((channel: any) => {
+      const channelName = typeof channel == 'string' ? channel : channel.name
+      const symbols = typeof channel == 'string' ? topLevelSymbols : channel.product_codes
+      const mappedChannels = (channelMappings as any)[channelName]
+
+      mappedChannels.forEach((channel: string) => {
+        finalChannels.push({
+          channel,
+          symbols
+        })
+      })
+    })
+
+    return finalChannels
+  }
+}
+
+const wooxMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.event === 'subscribe' || message.cmd === 'SUBSCRIBE'
+  },
+
+  map: (message: any) => {
+    const topics = message.topic !== undefined ? [message.topic] : message.data
+
+    return topics.map((topic: string) => {
+      const { channel, symbol } = parseWooxTopic(topic)
+      return {
+        channel,
+        symbols: symbol
+      }
+    })
+  }
+}
+
+function parseWooxTopic(topic: string) {
+  const parts = topic.split('@')
+
+  if (parts[0].startsWith('SPOT_') || parts[0].startsWith('PERP_')) {
+    return {
+      symbol: parts[0],
+      channel: parts[1]
+    }
+  }
+
+  return {
+    channel: parts[0],
+    symbol: parts[1]
+  }
+}
+
+const bitgetMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.op === 'subscribe'
+  },
+
+  map: (message: any) => {
+    return message.args.map((arg: any) => {
+      return {
+        channel: arg.channel ?? arg.topic,
+        symbols: arg.instId !== undefined || arg.symbol !== undefined ? [arg.instId ?? arg.symbol] : []
+      }
+    })
+  }
+}
+
+const mexcMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'SUBSCRIPTION' && Array.isArray(message.params)
+  },
+
+  map: (message: any) => {
+    return message.params.map((param: string) => {
+      const separator = param.lastIndexOf('@')
+
+      return {
+        channel: separator === -1 ? param : param.slice(0, separator),
+        symbols: separator === -1 ? [] : [param.slice(separator + 1)]
+      }
+    })
+  }
+}
+
+const mexcFuturesChannelMappings: Record<string, string> = {
+  'sub.deal': 'push.deal',
+  'sub.depth': 'push.depth',
+  'sub.ticker': 'push.ticker',
+  'sub.index.price': 'push.index.price',
+  'sub.fair.price': 'push.fair.price',
+  'sub.funding.rate': 'push.funding.rate',
+  'sub.contract': 'push.contract'
+}
+
+const mexcFuturesMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return mexcFuturesChannelMappings[message.method] !== undefined
+  },
+
+  map: (message: any) => {
+    return [
+      {
+        channel: mexcFuturesChannelMappings[message.method],
+        symbols: message.param?.symbol !== undefined ? [message.param.symbol] : []
+      }
+    ]
+  }
+}
+
+const coinbaseInternationalMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'SUBSCRIBE'
+  },
+
+  map: (message: any) => {
+    return message.channels.map((channel: string) => {
+      return {
+        channel,
+        symbols: message.product_ids
+      }
+    })
+  }
+}
+
+const hyperliquidMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const subscription = message.subscription ?? message
+    const isFastBook = subscription.type === 'l2Book' && subscription.fast === true
+
+    return [
+      {
+        channel: isFastBook ? 'fastBook' : subscription.type,
+        symbols: [subscription.coin]
+      }
+    ]
+  }
+}
+
+const lighterMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const [channel, symbol] = message.channel.split('/')
+    return [
+      {
+        channel,
+        symbols: symbol === undefined || symbol === 'all' ? [] : [symbol]
+      }
+    ]
+  }
+}
+
+const bitvavoMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.action === 'subscribe' || message.action === 'getBook'
+  },
+
+  map: (message: any) => {
+    if (message.action === 'getBook') {
+      return [{ channel: 'getBook', symbols: [message.market] }]
+    }
+
+    return message.channels.map((channel: any) => ({
+      channel: channel.name === 'trades' ? 'trade' : channel.name,
+      symbols: channel.markets
+    }))
+  }
+}
+
+const bullishMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.method === 'subscribe'
+  },
+
+  map: (message: any) => {
+    const channelMappings = {
+      l2Orderbook: 'V1TALevel2',
+      l1Orderbook: 'V1TALevel1',
+      anonymousTrades: 'V1TAAnonymousTradeUpdate',
+      tick: 'V1TATickerResponse',
+      indexPrice: 'V1TAIndexPrice'
+    } as any
+
+    return [
+      {
+        channel: channelMappings[message.params.topic],
+        symbols: [message.params.symbol || message.params.assetSymbol]
+      }
+    ]
+  }
+}
+
+const polymarketMapper: SubscriptionMapper = {
+  canHandle: (message: any) => {
+    return message.type === 'market'
+  },
+
+  map: (message: any) => {
+    const symbols = message.assets_ids
+
+    const filters = [
+      { channel: 'book', symbols },
+      { channel: 'price_change', symbols },
+      { channel: 'last_trade_price', symbols },
+      { channel: 'tick_size_change', symbols }
+    ]
+
+    if (message.custom_feature_enabled === true) {
+      filters.push({ channel: 'best_bid_ask', symbols }, { channel: 'new_market', symbols }, { channel: 'market_resolved', symbols })
+    }
+
+    return filters
+  }
+}
+
+// https://docs.whitebit.com/websocket/market-streams/depth
+const whitebitMapper: SubscriptionMapper = {
+  canHandle: (message: any) =>
+    ['depth_subscribe', 'bookTicker_subscribe', 'trades_subscribe', 'premiumIndex_subscribe', 'futures_subscribe'].includes(message.method),
+  map: (message: any) => [
+    {
+      channel: message.method.replace('_subscribe', '_update'),
+      symbols: message.method === 'depth_subscribe' ? [message.params[0]] : message.params
+    }
+  ]
+}
+
+export const subscriptionsMappers: Record<Exchange, SubscriptionMapper> = {
+  bitmex: bitmexMapper,
+  coinbase: coinbaseMaper,
+  'coinbase-derivatives': coinbaseDerivativesMapper,
+  deribit: deribitMapper,
+  cryptofacilities: cryptofacilitiesMapper,
+  bitstamp: bitstampMapper,
+  okex: okexMapper,
+  'okex-futures': okexMapper,
+  'okex-swap': okexMapper,
+  'okex-options': okexMapper,
+  ftx: ftxMapper,
+  'ftx-us': ftxMapper,
+  kraken: krakenMapper,
+  bitflyer: bitflyerMapper,
+  gemini: geminiMapper,
+  aster: binanceMapper,
+  'aster-futures': binanceMapper,
+  binance: binanceMapper,
+  'binance-futures': binanceMapper,
+  'binance-delivery': binanceMapper,
+  'binance-jersey': binanceMapper,
+  'binance-us': binanceMapper,
+  'binance-dex': binanceDEXMapper,
+  huobi: huobiMapper,
+  'huobi-dm': huobiMapper,
+  'huobi-dm-swap': huobiMapper,
+  'huobi-dm-linear-swap': huobiMapper,
+  bybit: bybitMapper,
+  bitfinex: bitfinexMapper,
+  'bitfinex-derivatives': bitfinexMapper,
+  okcoin: okexMapper,
+  hitbtc: hitBtcMapper,
+  coinflex: coinflexMapper,
+  phemex: phemexMapper,
+  delta: deltaMapper,
+  'delta-india': deltaIndiaMapper,
+  'gate-io': gateIOMapper,
+  'gate-io-futures': gateIOFuturesMapper,
+  poloniex: poloniexMapper,
+  ascendex: ascendexMapper,
+  dydx: dydxMapper,
+  'dydx-v4': dydxMapper,
+  'huobi-dm-options': huobiMapper,
+  upbit: upbitMapper,
+  bithumb: upbitMapper,
+  bitvavo: bitvavoMapper,
+  serum: serumMaper,
+  'star-atlas': serumMaper,
+  mango: serumMaper,
+  'bybit-spot': bybitSpotMapper,
+  'crypto-com': cryptoComMapper,
+  kucoin: kucoinMapper,
+  bitnomial: bitnomialMapper,
+  'woo-x': wooxMapper,
+  'blockchain-com': blockchainComMapper,
+  'bybit-options': bybitMapper,
+  'bybit-spread': bybitMapper,
+  'binance-european-options': binanceMapper,
+  'okex-spreads': okexMapper,
+  'kucoin-futures': kucoinMapper,
+  bitget: bitgetMapper,
+  'bitget-futures': bitgetMapper,
+  mexc: mexcMapper,
+  'mexc-futures': mexcFuturesMapper,
+  'coinbase-international': coinbaseInternationalMapper,
+  hyperliquid: hyperliquidMapper,
+  lighter: lighterMapper,
+  'lighter-rh': lighterMapper,
+  bullish: bullishMapper,
+  polymarket: polymarketMapper,
+  whitebit: whitebitMapper
+}
+
+export type SubscriptionMapper = {
+  canHandle: (message: object, date: Date) => boolean
+  map: (message: object, date: Date) => Filter<string>[]
+}

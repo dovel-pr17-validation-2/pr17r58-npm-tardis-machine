@@ -1,0 +1,8 @@
+node_modules
+/dist
+/*.log
+.tardis-cache
+*.tsbuildinfo
+bench
+.cache
+.DS_Store

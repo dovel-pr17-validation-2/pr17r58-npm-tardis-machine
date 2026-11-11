@@ -1,0 +1,90 @@
+{
+  "name": "tardis-machine",
+  "version": "18.9.0",
+  "engines": {
+    "node": "^24.22.1 || >=26.12.1"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^24.22.1 || >=26.12.1"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.17.0"
+    }
+  },
+  "description": "Locally runnable server with built-in data caching, providing both tick-level historical and consolidated real-time cryptocurrency market data via HTTP and WebSocket APIs",
+  "main": "dist/index.js",
+  "source": "src/index.ts",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "repository": "tardis-dev/tardis-machine",
+  "homepage": "https://github.com/tardis-dev/tardis-machine",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && tsc -p test/tsconfig.json && node --test test/*.test.ts",
+    "test:update-snapshots": "npm run build && tsc -p test/tsconfig.json && node --test --test-update-snapshots test/*.test.ts",
+    "prepare": "npm run build",
+    "format": "prettier --write .",
+    "check-format": "prettier --check .",
+    "benchmark": "node ./benchmark.js"
+  },
+  "bin": {
+    "tardis-machine": "./bin/tardis-machine.js"
+  },
+  "files": [
+    "src",
+    "dist",
+    "bin",
+    "benchmark.js"
+  ],
+  "keywords": [
+    "cryptocurrency data feed",
+    "market data",
+    "api client",
+    "crypto markets data replay",
+    "historical data",
+    "real-time cryptocurrency market data feed",
+    "historical cryptocurrency prices",
+    "cryptocurrency api",
+    "real-time normalized WebSocket cryptocurrency markets data",
+    "normalized cryptocurrency market data API",
+    "order book reconstruction",
+    "market data normalization",
+    "cryptocurrency api",
+    "cryptocurrency",
+    "orderbook",
+    "exchange",
+    "websocket",
+    "realtime",
+    "bitmex",
+    "binance",
+    "trading",
+    "high granularity order book data",
+    "replay service",
+    "historical cryptocurrency market data replay API"
+  ],
+  "license": "MPL-2.0",
+  "dependencies": {
+    "debug": "^4.4.3",
+    "tardis-dev": "^18.9.0",
+    "ws": "^8.21.3"
+  },
+  "bundleDependencies": true,
+  "devDependencies": {
+    "@types/debug": "^4.1.12",
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
+    "prettier": "3.9.6",
+    "typescript": "^6.0.3"
+  }
+}

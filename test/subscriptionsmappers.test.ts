@@ -1,0 +1,355 @@
+import { describe, test } from 'node:test'
+import { subscriptionsMappers } from '../src/ws/subscriptionsmappers.ts'
+import { assert } from './assertions.ts'
+
+describe('subscriptions mappers', () => {
+  test('maps WhiteBIT subscriptions without treating depth options as symbols', () => {
+    const mapper = subscriptionsMappers.whitebit
+    const date = new Date('2026-10-29')
+    for (const [method, params, channel, symbols] of [
+      ['depth_subscribe', ['BTC_USDT', 100, '0', true], 'depth_update', ['BTC_USDT']],
+      ['bookTicker_subscribe', ['BTC_PERP'], 'bookTicker_update', ['BTC_PERP']],
+      ['bookTicker_subscribe', [], 'bookTicker_update', []],
+      ['trades_subscribe', ['BTC_USDT', 'ETH_USDT'], 'trades_update', ['BTC_USDT', 'ETH_USDT']],
+      ['trades_subscribe', [], 'trades_update', []],
+      ['premiumIndex_subscribe', ['BTC_PERP', 'XAU_PERP'], 'premiumIndex_update', ['BTC_PERP', 'XAU_PERP']],
+      ['futures_subscribe', ['XAU_PERP'], 'futures_update', ['XAU_PERP']],
+      ['futures_subscribe', [], 'futures_update', []]
+    ] as const) {
+      const message = { id: 1, method, params }
+      assert.equal(mapper.canHandle(message, date), true)
+      assert.deepEqual(mapper.map(message, date), [{ channel, symbols }])
+    }
+    for (const method of ['depth_unsubscribe', 'depth_update', 'server.ping', 'unknown_subscribe']) {
+      assert.equal(mapper.canHandle({ method, params: [] }, date), false)
+    }
+  })
+
+  test('maps Delta India compact channels and preserves native mark price symbols', () => {
+    const mapper = subscriptionsMappers['delta-india']
+    const date = new Date('2026-10-20')
+    const channels = [
+      { name: 'trades', symbols: ['BTCUSD'] },
+      { name: 'ob_updates', symbols: ['BTCUSD'] },
+      { name: 'ob_l1', symbols: ['BTCUSD'] },
+      { name: 'ticker', symbols: ['C-BTC-83000-201026'] },
+      { name: 'mark_price', symbols: ['MARK:BTCUSD'] },
+      { name: 'funding_rate', symbols: ['BTCUSD'] },
+      { name: 'spot_price', symbols: ['.DEXBTUSD'] },
+      { name: 'spot_30mtwap_price', symbols: ['.DEXBTUSD'] },
+      { name: 'product_updates' },
+      { name: 'system_status' }
+    ]
+    const message = { type: 'subscribe', payload: { channels } }
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'trades', symbols: ['BTCUSD'] },
+      { channel: 'ob_updates', symbols: ['BTCUSD'] },
+      { channel: 'ob_l1', symbols: ['BTCUSD'] },
+      { channel: 'ticker', symbols: ['C-BTC-83000-201026'] },
+      { channel: 'mark_price', symbols: ['MARK:BTCUSD'] },
+      { channel: 'funding_rate', symbols: ['BTCUSD'] },
+      { channel: 'spot_price', symbols: ['.DEXBTUSD'] },
+      { channel: 'spot_30mtwap_price', symbols: ['.DEXBTUSD'] },
+      { channel: 'product_updates', symbols: undefined },
+      { channel: 'system_status', symbols: undefined }
+    ])
+    assert.equal(mapper.canHandle({ ...message, type: 'unsubscribe' }, date), false)
+  })
+
+  test('maps Coinbase derivatives subscriptions to recorded channels', () => {
+    const mapper = subscriptionsMappers['coinbase-derivatives']
+    const date = new Date()
+    const symbols = ['BIP-20DEC30-CDE']
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'level2', product_ids: symbols }, date), [{ channel: 'l2_data', symbols }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'market_trades', product_ids: symbols }, date), [
+      { channel: 'market_trades', symbols }
+    ])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'heartbeats' }, date), [{ channel: 'heartbeats', symbols: undefined }])
+    assert.equal(mapper.canHandle({ type: 'unsubscribe', channel: 'level2', product_ids: symbols }, date), false)
+  })
+
+  test('maps Gate futures OBU, legacy books and liquidation subscriptions', () => {
+    const mapper = subscriptionsMappers['gate-io-futures']
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    for (const [channel, payload, symbols] of [
+      ['obu', ['ob.BTC_USDT.400', 'ob.BTC_USD.400', 'ob.BTC_USD1.400'], ['BTC_USDT', 'BTC_USD', 'BTC_USD1']],
+      ['obu', ['ob.ETH_USDT_20261023.100'], ['ETH_USDT_20261023']],
+      ['order_book', ['BTC_USDT', '20', '0'], ['BTC_USDT']],
+      ['public_liquidates', ['!all'], []],
+      ['public_liquidates', ['BTC_USDT', 'ETH_USDT'], ['BTC_USDT', 'ETH_USDT']],
+      ['tickers', ['ETH_USDT_20261023'], ['ETH_USDT_20261023']],
+      ['trades', ['BTC_USD1'], ['BTC_USD1']],
+      ['book_ticker', ['BTC_USD'], ['BTC_USD']]
+    ] as const) {
+      const message = { event: 'subscribe', channel: `futures.${channel}`, payload }
+      assert.equal(mapper.canHandle(message, date), true)
+      assert.deepEqual(mapper.map(message, date), [{ channel, symbols }])
+    }
+    assert.equal(mapper.canHandle({ event: 'update', channel: 'futures.obu' }, date), false)
+  })
+
+  test('maps Aster Spot and Futures subscriptions', () => {
+    const date = new Date()
+    const spotMapper = subscriptionsMappers.aster
+    const futuresMapper = subscriptionsMappers['aster-futures']
+
+    const spotMessage = { method: 'SUBSCRIBE', params: ['btcusdt@trade', 'btcusdt@depth@0ms'] }
+    assert.equal(spotMapper.canHandle(spotMessage, date), true)
+    assert.deepEqual(spotMapper.map(spotMessage, date), [
+      { channel: 'trade', symbols: ['btcusdt'] },
+      { channel: 'depth', symbols: ['btcusdt'] }
+    ])
+
+    const futuresMessage = { method: 'SUBSCRIBE', params: ['btcusdt@markPrice@1s', 'btcusd@assetIndex'] }
+    assert.equal(futuresMapper.canHandle(futuresMessage, date), true)
+    assert.deepEqual(futuresMapper.map(futuresMessage, date), [
+      { channel: 'markPrice', symbols: ['btcusdt'] },
+      { channel: 'assetIndex', symbols: ['btcusd'] }
+    ])
+  })
+
+  test('maps Binance Futures global stream subscriptions without symbols', () => {
+    const mapper = subscriptionsMappers['binance-futures']
+    const message = { method: 'SUBSCRIBE', params: ['btcusdt@fundingRate', 'tradingSession', '!contractInfo'] }
+    assert.deepEqual(mapper.map(message, new Date()), [
+      { channel: 'fundingRate', symbols: ['btcusdt'] },
+      { channel: 'tradingSession', symbols: undefined },
+      { channel: '!contractInfo', symbols: undefined }
+    ])
+  })
+
+  test('maps Bybit options order book subscriptions with their depth', () => {
+    const mapper = subscriptionsMappers['bybit-options']
+    const date = new Date()
+    const message = { op: 'subscribe', args: ['orderbook.25.BTC-1AUG25-112000-P-USDT'] }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [{ channel: 'orderbook.25', symbols: ['BTC-1AUG25-112000-P-USDT'] }])
+  })
+
+  test('maps Bybit spread subscriptions with full spread symbols', () => {
+    const mapper = subscriptionsMappers['bybit-spread']
+    const date = new Date()
+    const message = { op: 'subscribe', args: ['orderbook.25.BTCUSDT_BTC/USDT', 'publicTrade.BTCUSDT-26MAR27_BTCUSDT-25DEC26'] }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'orderbook.25', symbols: ['BTCUSDT_BTC/USDT'] },
+      { channel: 'publicTrade', symbols: ['BTCUSDT-26MAR27_BTCUSDT-25DEC26'] }
+    ])
+  })
+
+  test('maps Hyperliquid fast book subscriptions', () => {
+    const mapper = subscriptionsMappers.hyperliquid
+    const date = new Date()
+
+    assert.deepEqual(mapper.map({ method: 'subscribe', subscription: { type: 'l2Book', coin: 'BTC' } }, date), [
+      { channel: 'l2Book', symbols: ['BTC'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'subscribe', subscription: { type: 'l2Book', coin: 'BTC', fast: true } }, date), [
+      { channel: 'fastBook', symbols: ['BTC'] }
+    ])
+  })
+
+  test('maps MEXC spot subscriptions', () => {
+    const mapper = subscriptionsMappers.mexc
+    const date = new Date()
+    const message = {
+      method: 'SUBSCRIPTION',
+      params: ['spot@public.aggre.deals.v3.api.pb@10ms@BTCUSDT', 'spot@public.aggre.depth.v3.api.pb@10ms@ETHUSDT']
+    }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'spot@public.aggre.deals.v3.api.pb@10ms', symbols: ['BTCUSDT'] },
+      { channel: 'spot@public.aggre.depth.v3.api.pb@10ms', symbols: ['ETHUSDT'] }
+    ])
+  })
+
+  test('maps MEXC futures subscriptions', () => {
+    const mapper = subscriptionsMappers['mexc-futures']
+    const date = new Date()
+
+    assert.equal(mapper.canHandle({ method: 'sub.depth', param: { symbol: 'BTC_USDT' }, gzip: false }, date), true)
+    assert.deepEqual(mapper.map({ method: 'sub.depth', param: { symbol: 'BTC_USDT' }, gzip: false }, date), [
+      { channel: 'push.depth', symbols: ['BTC_USDT'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'sub.contract' }, date), [{ channel: 'push.contract', symbols: [] }])
+  })
+
+  test('maps WOO X v2 and v3 subscriptions', () => {
+    const mapper = subscriptionsMappers['woo-x']
+    const date = new Date()
+
+    const v2Message = { event: 'subscribe', topic: 'PERP_BTC_USDT@orderbookupdate' }
+    assert.equal(mapper.canHandle(v2Message, date), true)
+    assert.deepEqual(mapper.map(v2Message, date), [{ channel: 'orderbookupdate', symbols: 'PERP_BTC_USDT' }])
+
+    const v3Message = {
+      cmd: 'SUBSCRIBE',
+      success: true,
+      data: ['trade@PERP_BTC_USDT', 'orderbookupdate@PERP_BTC_USDT@50']
+    }
+    assert.equal(mapper.canHandle(v3Message, date), true)
+    assert.deepEqual(mapper.map(v3Message, date), [
+      { channel: 'trade', symbols: 'PERP_BTC_USDT' },
+      { channel: 'orderbookupdate', symbols: 'PERP_BTC_USDT' }
+    ])
+  })
+
+  test('maps lighter symbol-scoped subscriptions', () => {
+    const mapper = subscriptionsMappers.lighter
+
+    assert.equal(mapper.canHandle({ type: 'subscribe', channel: 'order_book/0' }, new Date()), true)
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'order_book/0' }, new Date()), [{ channel: 'order_book', symbols: ['0'] }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'trade/1' }, new Date()), [{ channel: 'trade', symbols: ['1'] }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'ticker/2048' }, new Date()), [{ channel: 'ticker', symbols: ['2048'] }])
+  })
+
+  test('maps lighter all-market stats subscriptions', () => {
+    const mapper = subscriptionsMappers.lighter
+
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'market_stats/all' }, new Date()), [{ channel: 'market_stats', symbols: [] }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'spot_market_stats/all' }, new Date()), [
+      { channel: 'spot_market_stats', symbols: [] }
+    ])
+  })
+
+  test('maps Lighter RH subscriptions', () => {
+    const mapper = subscriptionsMappers['lighter-rh']
+    const date = new Date()
+
+    assert.equal(mapper.canHandle({ type: 'subscribe', channel: 'order_book/0' }, date), true)
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'order_book/0' }, date), [{ channel: 'order_book', symbols: ['0'] }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'ticker/2048' }, date), [{ channel: 'ticker', symbols: ['2048'] }])
+    assert.deepEqual(mapper.map({ type: 'subscribe', channel: 'market_stats/all' }, date), [{ channel: 'market_stats', symbols: [] }])
+  })
+
+  test('maps Bithumb subscriptions', () => {
+    const mapper = subscriptionsMappers.bithumb
+    const date = new Date()
+    const message = [
+      { ticket: 'test' },
+      { type: 'trade', codes: ['KRW-BTC', 'KRW-ETH'] },
+      { type: 'orderbook', codes: ['KRW-BTC'], level: 1 },
+      { type: 'ticker', codes: ['KRW-ETH'] },
+      { format: 'DEFAULT' }
+    ]
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'trade', symbols: ['KRW-BTC', 'KRW-ETH'] },
+      { channel: 'orderbook', symbols: ['KRW-BTC'] },
+      { channel: 'ticker', symbols: ['KRW-ETH'] }
+    ])
+  })
+
+  test('maps Bitvavo Market Data Pro subscriptions', () => {
+    const mapper = subscriptionsMappers.bitvavo
+    const date = new Date()
+    const message = {
+      action: 'subscribe',
+      channels: [
+        { name: 'trades', markets: ['BTC-EUR', 'ETH-EUR'] },
+        { name: 'book', markets: ['BTC-EUR'] },
+        { name: 'ticker', markets: ['ETH-EUR'] }
+      ]
+    }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'trade', symbols: ['BTC-EUR', 'ETH-EUR'] },
+      { channel: 'book', symbols: ['BTC-EUR'] },
+      { channel: 'ticker', symbols: ['ETH-EUR'] }
+    ])
+  })
+
+  test('maps Bitvavo order book snapshot requests', () => {
+    const mapper = subscriptionsMappers.bitvavo
+    const date = new Date()
+    const message = { action: 'getBook', requestId: 1, market: 'BTC-EUR', depth: 1000 }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [{ channel: 'getBook', symbols: ['BTC-EUR'] }])
+  })
+
+  test('maps bullish market data subscriptions', () => {
+    const mapper = subscriptionsMappers.bullish
+    const date = new Date()
+
+    assert.equal(
+      mapper.canHandle(
+        {
+          jsonrpc: '2.0',
+          type: 'command',
+          method: 'subscribe',
+          params: { topic: 'l2Orderbook', symbol: 'BTCUSDC' }
+        },
+        date
+      ),
+      true
+    )
+    assert.deepEqual(mapper.map({ method: 'subscribe', params: { topic: 'l2Orderbook', symbol: 'BTCUSDC' } }, date), [
+      { channel: 'V1TALevel2', symbols: ['BTCUSDC'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'subscribe', params: { topic: 'l1Orderbook', symbol: 'BTCUSDC' } }, date), [
+      { channel: 'V1TALevel1', symbols: ['BTCUSDC'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'subscribe', params: { topic: 'anonymousTrades', symbol: 'BTCUSDC' } }, date), [
+      { channel: 'V1TAAnonymousTradeUpdate', symbols: ['BTCUSDC'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'subscribe', params: { topic: 'tick', symbol: 'BTC-USDC-PERP' } }, date), [
+      { channel: 'V1TATickerResponse', symbols: ['BTC-USDC-PERP'] }
+    ])
+    assert.deepEqual(mapper.map({ method: 'subscribe', params: { topic: 'indexPrice', assetSymbol: 'BTC' } }, date), [
+      { channel: 'V1TAIndexPrice', symbols: ['BTC'] }
+    ])
+  })
+
+  test('maps Polymarket market subscriptions', () => {
+    const mapper = subscriptionsMappers.polymarket
+    const date = new Date()
+    const message = { type: 'market', assets_ids: ['2174101397', '713210352'] }
+
+    assert.equal(mapper.canHandle(message, date), true)
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'book', symbols: ['2174101397', '713210352'] },
+      { channel: 'price_change', symbols: ['2174101397', '713210352'] },
+      { channel: 'last_trade_price', symbols: ['2174101397', '713210352'] },
+      { channel: 'tick_size_change', symbols: ['2174101397', '713210352'] }
+    ])
+  })
+
+  test('maps Polymarket custom market subscriptions', () => {
+    const mapper = subscriptionsMappers.polymarket
+    const date = new Date()
+    const message = { type: 'market', assets_ids: ['2174101397'], custom_feature_enabled: true }
+
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'book', symbols: ['2174101397'] },
+      { channel: 'price_change', symbols: ['2174101397'] },
+      { channel: 'last_trade_price', symbols: ['2174101397'] },
+      { channel: 'tick_size_change', symbols: ['2174101397'] },
+      { channel: 'best_bid_ask', symbols: ['2174101397'] },
+      { channel: 'new_market', symbols: ['2174101397'] },
+      { channel: 'market_resolved', symbols: ['2174101397'] }
+    ])
+  })
+
+  test('maps Polymarket empty asset subscriptions', () => {
+    const mapper = subscriptionsMappers.polymarket
+    const date = new Date()
+    const message = { type: 'market', assets_ids: [], custom_feature_enabled: true }
+
+    assert.deepEqual(mapper.map(message, date), [
+      { channel: 'book', symbols: [] },
+      { channel: 'price_change', symbols: [] },
+      { channel: 'last_trade_price', symbols: [] },
+      { channel: 'tick_size_change', symbols: [] },
+      { channel: 'best_bid_ask', symbols: [] },
+      { channel: 'new_market', symbols: [] },
+      { channel: 'market_resolved', symbols: [] }
+    ])
+  })
+})
